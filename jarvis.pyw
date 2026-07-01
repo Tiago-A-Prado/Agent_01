@@ -11,6 +11,7 @@ import io
 import wave
 import subprocess
 import speech_recognition as sr
+import psutil
 
 from tkinter import * #Interface gráfica 
 from pathlib import Path #abilita a função Path, extrai somente o nome do arquivos
@@ -20,12 +21,12 @@ from rapidfuzz import process, fuzz #process -> realiza busca texto x lista de o
 usuario = os.getenv('USER') #Pega o noe do usuário do computador, facilita montagem de caminho para arquivos
 
 #---------------------AUDIO----------------------#
-r = sr.Recognizer()
+r = sr.Recognizer()   
 def reconhecimento_voz(exibir):
-    try:
+    try:  #CALIBRA O AÚDIO PARA MELHOR RECONHECIMENTO
         exibir('Calibrando...')
         fs = 16000
-        duration = 5
+        duration = 5 #TEMPO DE CALIBRAÇÃO
         exibir('Ouvindo...')
         audio = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='int16')
         sd.wait()
@@ -58,11 +59,13 @@ SEARCH_DIRS = [
     '/usr/local/bin',
     '/usr/share/applications',
     f'/home/{usuario}/.local/share/applications',
+    '/var/lib/flatpak/exports/share/applications/',
+    '/home/voidtm/.local/share/flatpak/exports/share/applications/'
 ]
 APELIDOS = {
     'code': 'visual studio code',
     'vscode': 'visual studio code',
-    'excel': 'microsoft excel'
+    "spotify": "com.spotify.client"
 }
 
 
@@ -129,6 +132,15 @@ def interpretar_comando(comando):
             "alvo": alvo #o resto é o alvo da ação
         }
         
+    elif 'fechar' in comando:
+        partes = comando.split('fechar')
+        alvo = partes[1].strip() if len(partes) > 1 else ''
+
+        return {
+            "tipo": "comando",
+            "acao": "fechar",
+            "alvo": alvo
+        }
     
     #---------------O COMANDO REPETE PARA OS OUTROS PRÉ COLOCADOS-----------------#
     elif 'pesquisar' in comando:
@@ -140,17 +152,7 @@ def interpretar_comando(comando):
             "acao": "pesquisar",
             "alvo": alvo
         }
-    
-    elif 'criar' in comando:
-        partes = comando.split('criar')
-        alvo = partes[1].strip() if len(partes) > 1 else ''
 
-        return{
-            "tipo": 'comando',
-            'acao': 'criar',
-            'alvo': alvo
-        }
-    
     #0----------------------FUNÇÃO MEMORIA-------------------------#
     elif 'meu nome é' in comando:
         nome = comando.replace('meu nome é', '').strip()
@@ -204,6 +206,38 @@ def busca(alvo, index, exibir): #cria a função de busca utilizando a chave 'al
         exibir(f'reconhecido como: "{nome_encontrado}"')
         return index[nome_encontrado]
 
+
+def busca_ativo(alvo, index, exibir):  #Função de busca de programas ativos
+
+    alvo = alvo.lower().strip()
+    alvo = APELIDOS.get(alvo, alvo)
+
+    ativos = {} #Dicionário para armazenar os programas encontrados 
+
+
+    for processo in psutil.process_iter(attrs = ['pid', 'name']): #Busca dos programas, separando os valores em suas respectivas variaveis
+        pid = processo.info['pid']
+        nome = processo.info['name']
+
+        ativos[pid] = nome #Adiciona os valores no dicionário
+
+    pt = process.extractOne(alvo, ativos.values(), scorer=fuzz.WRatio) #Sistema de pontuação
+
+    if pt and pt[1] >=70:
+        maior_pt = pt[0] 
+        exibir(f'nome reconhecido: {maior_pt}')
+
+        for pid, nome in ativos.items():
+
+            if nome == pt[0]:
+                pid_alvo = pid
+                return pid_alvo
+
+    else:
+        return None
+
+
+
 #--------------------EXECUTANDO COMANDOS-----------------------#
 
 
@@ -226,6 +260,29 @@ def executar(interpretar_comando, memoria, historico, index, exibir):  #Função
                     recarregar_cache_back() #depois atualiza o índice
                 else:
                     exibir(f'Programa "{alvo}" não encontrado')
+
+        elif acao == "fechar":
+            alvo = interpretar_comando["alvo"]
+        
+            if alvo:
+
+                prog = busca_ativo(alvo, index, exibir)
+                if prog:
+                    try:
+                        psutil.Process(prog).terminate()
+                        psutil.Process(prog).wait(3)
+                        
+                        exibir(f'Fechando {alvo}')
+
+                    except psutil.TimeoutExpired:
+                        psutil.Process(prog).kill()
+                        exibir(f'Encerrando {alvo}')
+
+                    except:
+                        exibir(f'Não foi possível fechar {alvo}')
+
+                else:
+                    exibir(f'Programa: {alvo} não identificado')
         
         elif acao == "sair":
             exibir('Encerrando...')
